@@ -9,10 +9,13 @@ import {
 import fetch from "node-fetch";
 import fs from "fs/promises";
 import path from "path";
+import { generateLatex } from "./lib/latex-generator.js";
+import { compilePDF } from "./lib/pdf-compiler.js";
+import { expandTemplates } from "./lib/template-expander.js";
 
 // Configuration
 const RESUME_ENDPOINT = "https://latexresu.me/api/generate/resume";
-const OUTPUT_DIR = "E:\\DDEV\\GENERATED RESUME\\generated-resumes";
+const OUTPUT_DIR = "/home/virus/Documents/generated-resumes";
 
 class ResumeGeneratorServer {
   constructor() {
@@ -71,6 +74,8 @@ class ResumeGeneratorServer {
                     type: "object",
                     properties: {
                       name: { type: "string", description: "Full name" },
+                      label: { type: "string", description: "Professional title (e.g., 'AI Engineer', 'Software Engineer')" },
+                      summary: { type: "string", description: "Professional summary/objective statement" },
                       email: { type: "string", description: "Email address" },
                       phone: { type: "string", description: "Phone number" },
                       website: {
@@ -133,6 +138,10 @@ class ResumeGeneratorServer {
                         description: { type: "string" },
                         url: { type: "string" },
                         keywords: {
+                          type: "array",
+                          items: { type: "string" },
+                        },
+                        highlights: {
                           type: "array",
                           items: { type: "string" },
                         },
@@ -527,34 +536,18 @@ class ResumeGeneratorServer {
       // Ensure output directory exists
       await fs.mkdir(outputDir, { recursive: true });
 
-      const response = await fetch(RESUME_ENDPOINT, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        },
-        body: JSON.stringify(completeResumeData),
-      });
+      // PHASE 1.2: Expand template references before LaTeX generation
+      // This replaces {{template-id}} with full locked content
+      console.log("Expanding template references...");
+      const expandedResumeData = expandTemplates(completeResumeData);
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(
-          `Resume API responded with status: ${response.status} ${response.statusText}. Response: ${errorText}`
-        );
-      }
+      // Generate LaTeX code from expanded resume data
+      console.log("Generating LaTeX code...");
+      const latexCode = generateLatex(expandedResumeData);
 
-      // Check if response is actually a PDF
-      const contentType = response.headers.get("content-type");
-      if (!contentType || !contentType.includes("application/pdf")) {
-        const text = await response.text();
-        throw new Error(
-          `Expected PDF response but got: ${contentType}. Response: ${text.substring(
-            0,
-            500
-          )}...`
-        );
-      }
+      // Compile LaTeX to PDF
+      console.log("Compiling PDF...");
+      const buffer = await compilePDF(latexCode);
 
       // Save PDF to file
       const timestamp = new Date()
@@ -564,8 +557,6 @@ class ResumeGeneratorServer {
       const pdfFilename = `${filename}-${timestamp}.pdf`;
       const filePath = path.join(outputDir, pdfFilename);
 
-      const arrayBuffer = await response.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
       await fs.writeFile(filePath, buffer);
 
       const fullPath = path.resolve(filePath);
@@ -597,7 +588,7 @@ class ResumeGeneratorServer {
             text:
               `❌ **Error generating resume:** ${error.message}\n\n` +
               `Please check:\n` +
-              `• Your internet connection\n` +
+              `• That pdflatex is installed (run: which pdflatex)\n` +
               `• That all required fields are filled\n` +
               `• The resume data structure is correct\n` +
               `• The specified folder path is valid`,
